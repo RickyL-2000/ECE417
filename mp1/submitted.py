@@ -21,7 +21,12 @@ def make_frames(signal, hop_length, win_length):
     num_frames should be enough so that each sample from the signal occurs in at least one frame.
     The last frame may be zero-padded.
     '''
-    raise RuntimeError("You need to write this part!")
+    num_frames = int(signal.shape[0] / hop_length)
+    frames = np.zeros(shape=(num_frames, win_length))
+    for i in range(num_frames):
+        frames[i][: min(win_length, signal.shape[0] - i * hop_length)] = \
+            signal[i * hop_length: min(i * hop_length + win_length, signal.shape[0])]
+    return frames
 
 def correlate(frames):
     '''
@@ -30,7 +35,11 @@ def correlate(frames):
     frames (num_frames, win_length) - array with one frame per row
     autocor (num_frames, 2*win_length-1) - each row is the autocorrelation of one frame
     '''
-    raise RuntimeError("You need to write this part!")
+    num_frames, win_length = frames.shape
+    autocor = np.zeros(shape=(num_frames, 2 * win_length - 1))
+    for i in range(num_frames):
+        autocor[i] = np.correlate(frames[i], frames[i], mode='full')
+    return autocor
 
 def make_matrices(autocor, p):
     '''
@@ -41,7 +50,15 @@ def make_matrices(autocor, p):
     R (num_frames, p, p) - p-by-p Toeplitz autocor matrix of each frame, with R[0] on main diagonal
     gamma (num_frames, p) - length-p autocor vector of each frame, R[1] through R[p]
     '''
-    raise RuntimeError("You need to write this part!")
+    num_frames, win_length = autocor.shape
+    win_length = (win_length + 1) // 2
+    R = np.zeros(shape=(num_frames, p, p))
+    gamma = np.zeros(shape=(num_frames, p))
+    for i in range(num_frames):
+        for j in range(p):
+            R[i, j] = autocor[i, win_length - 1 - j: win_length - 1 + p - j]
+        gamma[i] = autocor[i, win_length: win_length + p]
+    return R, gamma
 
 def lpc(R, gamma):
     '''
@@ -52,7 +69,11 @@ def lpc(R, gamma):
     gamma (num_frames, p) - length-p autocor vector of each frame, R[1] through R[p]
     a (num_frames,p) - LPC predictor coefficients in each frame
     '''
-    raise RuntimeError("You need to write this part!")
+    num_frames, p = gamma.shape
+    a = np.zeros(shape=(num_frames, p))
+    for i in range(num_frames):
+        a[i] = np.linalg.inv(R[i]).dot(gamma[i])
+    return a
 
 def framepitch(autocor, Fs):
     '''
@@ -67,7 +88,17 @@ def framepitch(autocor, Fs):
     Pitch period should maximize R[framepitch]/R[0], in the range 4ms <= framepitch < 13ms.
     Call the frame voiced if and only if R[framepitch]/R[0] >= 0.3, else unvoiced.
     '''
-    raise RuntimeError("You need to write this part!")
+    num_frames, win_length = autocor.shape
+    win_length = (win_length + 1) // 2
+    framepitch = np.zeros(shape=num_frames)
+    for i in range(num_frames):
+        period = np.argmax(autocor[i, int(0.004 * Fs) + win_length - 1: 
+                                            int(0.013 * Fs) + win_length - 1] /
+                                            autocor[i, win_length - 1]) + int(0.004 * Fs)
+        framepitch[i] = period \
+            if autocor[i, period + win_length - 1] / autocor[i, win_length - 1] >= 0.3 \
+            else 0.0
+    return framepitch
             
 def framelevel(frames):
     '''
@@ -76,7 +107,11 @@ def framelevel(frames):
     frames (num_frames, win_length) - array with one frame per row
     framelevel (num_frames) - framelevel[t] = power (energy/duration) of the t'th frame, in decibels
     '''
-    raise RuntimeError("You need to write this part!")
+    num_frames, win_length = frames.shape
+    framelevel = np.zeros(shape=num_frames)
+    for i in range(num_frames):
+        framelevel[i] = 10 * np.log10(np.sum(frames[i] * frames[i]) / win_length)
+    return framelevel
 
 def interpolate(framelevel, framepitch, hop_length):
     '''
@@ -91,7 +126,16 @@ def interpolate(framelevel, framepitch, hop_length):
     samplelevel is exactly as given by numpy.interp.
     samplepitch is modified so that samplepitch[n]=0 if the current frame or next frame are unvoiced.
     '''
-    raise RuntimeError("You need to write this part!")
+    num_frames = framelevel.shape[0]
+    samplelevel = np.interp(np.linspace(0, num_frames - 1, (num_frames - 1) * hop_length + 1),
+                            np.arange(num_frames), framelevel)
+    samplepitch = np.interp(np.linspace(0, num_frames - 1, (num_frames - 1) * hop_length + 1),
+                            np.arange(num_frames), framepitch)        
+    for i in range(num_frames):
+        if framepitch[i] == 0.0 or (i < num_frames-1 and framepitch[i+1] == 0.0):
+            samplepitch[i * hop_length: (i + 1) * hop_length] = 0.0
+    return samplelevel, samplepitch
+    
 
 def excitation(samplelevel, samplepitch):
     '''
@@ -113,7 +157,25 @@ def excitation(samplelevel, samplepitch):
     ## (See https://numpy.org/doc/stable/reference/random/generated/numpy.random.normal.html).
     ## (1) You must generate them in order, from the beginning to the end of the waveform.
     ## (2) You must generate a random sample _only_ if the corresponding samplepitch[n] > 0.
-    raise RuntimeError("You need to write this part!")
+    length = samplelevel.shape[0]
+    phase = np.zeros(shape=length)
+    # excitation = (10 ** (samplelevel / 10)) ** 0.5
+    excitation = np.zeros(shape=length)
+    for i in range(1, length):
+        if samplepitch[i] == 0:
+            # if sample is unvoiced, don't increment the pitch phase
+            phase[i] = phase[i-1]
+            excitation[i] = (10 ** (samplelevel[i] / 10)) ** 0.5 * rg.normal()
+            # FIXME: why the instruction says must generate sample if pitch > 0? typo?
+        elif samplepitch[i] > 0:
+            phase[i] = phase[i-1] + 2 * np.pi / samplepitch[i]
+            if phase[i] >= 2 * np.pi:
+                phase %= 2 * np.pi
+                excitation[i] = (10 ** (samplelevel[i] / 10)) ** 0.5 * samplepitch[i] ** 0.5
+            # else:
+            #     excitation[i] = (10 ** (samplelevel[i] / 10)) ** 0.5 * rg.normal()
+            # FIXME: according to the formula, this code above should exist. Why not?
+    return phase, excitation
 
 def synthesize(excitation, a):
     '''
@@ -122,4 +184,12 @@ def synthesize(excitation, a):
     a (num_frames,p) - LPC predictor coefficients in each frame
     y ((num_frames-1)*hop_length+1) - LPC synthesized  speech signal
     '''
-    raise RuntimeError("You need to write this part!")
+    length = excitation.shape[0]
+    num_frames, p = a.shape
+    hop_length = (length - 1) // (num_frames - 1)
+    y = np.zeros(shape=length)
+    for i in range(length):
+        y[i] += excitation[i]
+        for j in range(p):
+            y[i] += a[i // hop_length, j] * (y[i - j - 1] if i - j - 1 >= 0 else 0.0)
+    return y
