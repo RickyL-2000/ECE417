@@ -161,14 +161,14 @@ def excitation(samplelevel, samplepitch):
     phase = np.zeros(shape=length)
     # excitation = (10 ** (samplelevel / 10)) ** 0.5
     excitation = np.zeros(shape=length)
-    for i in range(1, length):
+    for i in range(length):
         if samplepitch[i] == 0:
             # if sample is unvoiced, don't increment the pitch phase
-            phase[i] = phase[i-1]
+            phase[i] = phase[i-1] if i > 0 else 0.0
             excitation[i] = (10 ** (samplelevel[i] / 10)) ** 0.5 * rg.normal()
             # FIXME: why the instruction says must generate sample if pitch > 0? typo?
         elif samplepitch[i] > 0:
-            phase[i] = phase[i-1] + 2 * np.pi / samplepitch[i]
+            phase[i] = phase[i-1] + 2 * np.pi / samplepitch[i] if i > 0 else 0.0
             if phase[i] >= 2 * np.pi:
                 phase %= 2 * np.pi
                 excitation[i] = (10 ** (samplelevel[i] / 10)) ** 0.5 * samplepitch[i] ** 0.5
