@@ -40,7 +40,28 @@ def gradients(x):
     gr (TxRxC) - gradient in the vertical direction
     gc (TxRxC) - gradient in the horizontal direction
     '''
-    raise RuntimeError("You need to write this part!")
+    gt = np.zeros(shape=x.shape)
+    gr = np.zeros(shape=x.shape)
+    gc = np.zeros(shape=x.shape)
+
+    for i in range(x.shape[0]):
+        for j in range(x.shape[1]):
+            for k in range(1, x.shape[2]-1):
+                gc[i, j, k] = - 0.5 * x[i, j, k-1] + 0.5 * x[i, j, k+1]
+        for k in range(x.shape[2]):
+            for j in range(1, x.shape[1]-1):
+                gr[i, j, k] = - 0.5 * x[i, j-1, k] + 0.5 * x[i, j+1, k]
+    for i in range(1, x.shape[0]-1):
+        for j in range(x.shape[1]):
+            for k in range(x.shape[2]):
+                gt[i, j, k] = - 0.5 * x[i-1, j, k] + 0.5 * x[i+1, j, k]
+    gt[0, :, :] = 0
+    gt[-1, :, :] = 0
+    gr[:, 0, :] = 0
+    gr[:, -1, :] = 0
+    gc[:, :, 0] = 0
+    gc[:, :, -1] = 0
+    return gt, gr, gc
 
 def lucas_kanade(gt, gr, gc, H, W):
     '''
@@ -51,11 +72,31 @@ def lucas_kanade(gt, gr, gc, H, W):
     gc (TxRxC) - gradient in the horizontal direction
     H (scalar) - height (in rows) of each optical flow block
     W (scalar) - width (in columns) of each optical flow block
+    
+    Within each HxW block of each frame, you should create:
+     - b vector, of size (H*W,1)
+     - A matrix, of size (H*W,2)
+     - calculate v = pinv(A)*b
+     - assign vr and vc as the two elements of the v vector
 
     vr (Txint(R/H)xint(C/W)) - pixel velocity in vertical direction
     vc (Txint(R/H)xint(C/W)) - pixel velocity in horizontal direction
     '''
-    raise RuntimeError("You need to write this part!")
+    T, R, C = gt.shape
+    b = np.zeros(shape=(H*W, 1))
+    A = np.zeros(shape=(H*W, 2))
+    vr = np.zeros(shape=(T, int(R/H), int(C/W)))
+    vc = np.zeros(shape=(T, int(R/H), int(C/W)))
+
+    for t in range(gt.shape[0]):
+        for i in range(int(R/H)):
+            for j in range(int(C/W)):
+                b = - gt[t, int(i*H): int((i+1)*H), int(j*W): int((j+1)*W)].reshape(H*W, 1)
+                A[:, 0] = gc[t, int(i*H): int((i+1)*H), int(j*W): int((j+1)*W)].reshape(H*W)
+                A[:, 1] = gr[t, int(i*H): int((i+1)*H), int(j*W): int((j+1)*W)].reshape(H*W)
+                v = np.linalg.pinv(A).dot(b)
+                vc[t, i, j], vr[t, i, j] = v[0], v[1]
+    return vr, vc
 
 def medianfilt(x, H, W):
     '''
@@ -64,14 +105,21 @@ def medianfilt(x, H, W):
 
     x (TxRxC) - a video with T frames, R rows, C columns
     H (scalar) - the height of median-filtering blocks
-    C (scalar) - the width of median-filtering blocks
+    W (scalar) - the width of median-filtering blocks
     y (TxRxC) - y[t,r,c] is the median of the pixels x[t,rmin:rmax,cmin:cmax], where
       rmin = max(0,r-int((H-1)/2))
       rmax = min(R,r+int((H-1)/2)+1)
       cmin = max(0,c-int((W-1)/2))
       cmax = min(C,c+int((W-1)/2)+1)
     '''
-    raise RuntimeError("You need to write this part!")
+    T, R, C = x.shape
+    y = np.zeros(shape=x.shape)
+    for t in range(x.shape[0]):
+        for r in range(x.shape[1]):
+            for c in range(x.shape[2]):
+                y[t, r, c] = np.median(x[t, max(0, r-int((H-1)/2)): min(R, r+int((H-1)/2)+1), 
+                                            max(0, c-int((W-1)/2)): min(C, c+int((W-1)/2)+1)])
+    return y
             
 def interpolate(x, U):
     '''
@@ -82,7 +130,14 @@ def interpolate(x, U):
     U (scalar) - upsampling factor
     y (Tx(U*R)x(U*C)) - interpolated image
     '''
-    raise RuntimeError("You need to write this part!")
+    T, R, C = x.shape
+    y = np.zeros(shape=(T, U*R, U*C))
+    for t in range(T):
+        for r in range(R):
+            y[t, U * r, :] = np.interp(np.arange(U*C), np.arange(0, U*C, U), x[t, r, :])
+        for c in range(C*U):
+            y[t, :, c] = np.interp(np.arange(U*R), np.arange(0, U*R, U), [y[t, i, c] for i in range(0, U*R, U)])
+    return y
 
 def scale_velocities(v, U):
     '''
@@ -94,7 +149,15 @@ def scale_velocities(v, U):
     U (scalar) - an upsampling factor
     delta (TxRxC) - integers closest to v*U
     '''
-    raise RuntimeError("You need to write this part!")
+    return np.array(list(map(lambda x: int(np.round(x)), (v * U).reshape(-1)))).reshape(v.shape)
+    # T, R, C = v.shape
+    # delta = np.zeros(shape=v.shape)
+    # delta = v * U
+    # for t in range(T):
+    #     for r in range(R):
+    #         for c in range(C):
+    #             delta[t, r, c] = int(np.round(delta[t, r, c]))
+    # return delta
 
 def velocity_fill(x, vr, vc, keep):
     '''
@@ -111,4 +174,19 @@ def velocity_fill(x, vr, vc, keep):
 
     y (T,R,C) - a copy of x, with the missing frames filled in.
     '''
-    raise RuntimeError("You need to write this part!")
+    T, R, C = x.shape
+    T, Ra, Cb = vr.shape
+    y = np.zeros(shape=x.shape)
+    for t in range(T):
+        if t in keep:
+            y[t, :, :] = x[t, :, :]
+            continue
+        for r in range(R):
+            for c in range(C):
+                if r >= Ra or c >= Cb:
+                    y[t, r, c] = y[t-1, r, c]
+                else:
+                    y[t, r, c] = y[t-1, 
+                                   max(min(int(r - vr[t-1, r, c]), R-1), 0), 
+                                   max(min(int(c - vc[t-1, r, c]), C-1), 0)]
+    return y
