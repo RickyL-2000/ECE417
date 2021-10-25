@@ -21,13 +21,14 @@ def smooth_video(x, sigma, L):
     '''
     kernel = np.zeros(shape=L)
     for i in range(L):
-        kernel[i] = np.exp(- ((i - (L-1)) / sigma) ** 2 / 2) / (2 * np.pi * sigma ** 2) ** 0.5
+        kernel[i] = np.exp(- 0.5 * ((i - (L-1)/2) / sigma) ** 2) / (2 * np.pi * sigma ** 2) ** 0.5
+    # print(kernel)
     y = np.zeros(shape=x.shape)
     for i in range(x.shape[0]):
         for j in range(x.shape[1]):
-            y[i, j, :] = np.correlate(x[i, j, :], kernel, 'same')
+            y[i, j, :] = np.convolve(x[i, j, :], kernel, 'same')
         for j in range(x.shape[2]):
-            y[i, :, j] = np.correlate(y[i, :, j], kernel, 'same')
+            y[i, :, j] = np.convolve(y[i, :, j], kernel, 'same')
     return y
 
 def gradients(x):
@@ -44,17 +45,18 @@ def gradients(x):
     gr = np.zeros(shape=x.shape)
     gc = np.zeros(shape=x.shape)
 
-    for i in range(x.shape[0]):
-        for j in range(x.shape[1]):
-            for k in range(1, x.shape[2]-1):
-                gc[i, j, k] = - 0.5 * x[i, j, k-1] + 0.5 * x[i, j, k+1]
-        for k in range(x.shape[2]):
-            for j in range(1, x.shape[1]-1):
-                gr[i, j, k] = - 0.5 * x[i, j-1, k] + 0.5 * x[i, j+1, k]
-    for i in range(1, x.shape[0]-1):
-        for j in range(x.shape[1]):
-            for k in range(x.shape[2]):
-                gt[i, j, k] = - 0.5 * x[i-1, j, k] + 0.5 * x[i+1, j, k]
+    kernel = np.array([0.5, 0.0, -0.5])
+
+    T, R, C = x.shape
+    for t in range(T):
+        for r in range(R):
+            gc[t, r, :] = np.convolve(x[t, r, :], kernel, 'same')
+        for c in range(C):
+            gr[t, :, c] = np.convolve(x[t, :, c], kernel, 'same')
+    for r in range(R):
+        for c in range(C):
+            gt[:, r, c] = np.convolve(x[:, r, c], kernel, 'same')
+
     gt[0, :, :] = 0
     gt[-1, :, :] = 0
     gr[:, 0, :] = 0
@@ -132,11 +134,16 @@ def interpolate(x, U):
     '''
     T, R, C = x.shape
     y = np.zeros(shape=(T, U*R, U*C))
+
     for t in range(T):
         for r in range(R):
-            y[t, U * r, :] = np.interp(np.arange(U*C), np.arange(0, U*C, U), x[t, r, :])
+            y[t, U * r, :] = np.interp(x=np.arange(U*C), 
+                                       xp=np.append(np.arange(0, U*C, U), U*C),     # not to U*C-1, must be U*C
+                                       fp=np.append(x[t, r, :], 0.0))
         for c in range(C*U):
-            y[t, :, c] = np.interp(np.arange(U*R), np.arange(0, U*R, U), [y[t, i, c] for i in range(0, U*R, U)])
+            y[t, :, c] = np.interp(x=np.arange(U*R), 
+                                   xp=np.append(np.arange(0, U*R, U), U*R), 
+                                   fp=np.append([y[t, i, c] for i in range(0, U*R, U)], 0.0))
     return y
 
 def scale_velocities(v, U):
@@ -150,14 +157,6 @@ def scale_velocities(v, U):
     delta (TxRxC) - integers closest to v*U
     '''
     return np.array(list(map(lambda x: int(np.round(x)), (v * U).reshape(-1)))).reshape(v.shape)
-    # T, R, C = v.shape
-    # delta = np.zeros(shape=v.shape)
-    # delta = v * U
-    # for t in range(T):
-    #     for r in range(R):
-    #         for c in range(C):
-    #             delta[t, r, c] = int(np.round(delta[t, r, c]))
-    # return delta
 
 def velocity_fill(x, vr, vc, keep):
     '''

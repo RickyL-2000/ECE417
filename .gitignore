@@ -4,3 +4,7 @@ __pycache__
 # large datasets
 mp2/solutions.hdf5
 mp2/generated
+mp2_extra/extra_solutions.hdf5
+mp3_extra/solutions_extra.hdf5
+mp3/solutions.hdf5
+mp3/data
