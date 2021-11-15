@@ -33,7 +33,7 @@ def recognize(Xtrain, Xdev, Xtest):
     
     # sampling data set
     for y in labels:
-        Xtrain[y] = Xtrain[y][: int(len(Xtrain[y])/2)]
+        Xtrain[y] = Xtrain[y][: int(len(Xtrain[y]) * 0.6)]
 
     print("begin training...")
     epochs = 5
