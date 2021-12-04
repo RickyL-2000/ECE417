@@ -8,3 +8,9 @@ mp2_extra/extra_solutions.hdf5
 mp3_extra/solutions_extra.hdf5
 mp3/solutions.hdf5
 mp3/data
+mp6/ece417mp6_autovc.pt
+mp6/ece417mp6_gruembedder.pt
+mp6/ece417mp6_hifigan.pt
+mp6/visible_decoder.pkl
+mp6/visible_encoder.pkl
+mp6/visible_postnet.pkl
