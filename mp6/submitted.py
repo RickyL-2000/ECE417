@@ -452,13 +452,33 @@ class Postnet(Module):
                 before being sent to the next layer.
         """
         super(Postnet, self).__init__()
-        raise NotImplementedError("You need to implement this!")
+
+        self.convolutions = Sequential(
+            Conv1d(80, 512, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(512),
+            Tanh(),
+            Conv1d(512, 512, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(512),
+            Tanh(),
+            Conv1d(512, 512, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(512),
+            Tanh(),
+            Conv1d(512, 512, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(512),
+            Tanh(),
+            Conv1d(512, 80, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(80),
+            # ReLU(),
+        )
+
+        # raise NotImplementedError("You need to implement this!")
 
     def forward(self, x: TensorType["batch", "input_channels", "n_mels"]) -> TensorType["batch", "input_channels", "n_mels"]:
         """
         Performs the forward propagation of the AutoVC decoder.
         If you initialized this module properly, passing the input through self.convolutions here should suffice.
         """
+        return self.convolutions(x)
         raise NotImplementedError("You need to implement this!")
 
 class SpeakerEmbedderGeeArrYou(Module):
