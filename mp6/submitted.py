@@ -1,7 +1,7 @@
 from typing import Any, Tuple
 
-from torch import Tensor, matmul, norm, randn, zeros, zeros_like, cat, stack
-from torch.nn import BatchNorm1d, Conv1d, Module, ModuleList, Parameter, ReLU, Sequential, Sigmoid, Tanh, LSTMCell
+from torch import Tensor, matmul, norm, randn, zeros, zeros_like, cat, stack, transpose, split
+from torch.nn import BatchNorm1d, Conv1d, Module, ModuleList, Parameter, ReLU, Sequential, Sigmoid, Tanh, LSTMCell, GRUCell
 import torch.nn.functional as F
 # from torch.autograd import Variable
 from torch.nn.parameter import Parameter
@@ -21,8 +21,8 @@ class LineEar(Module):
         You may also set other instance variables at this point, but these are not strictly necessary.
         """
         super(LineEar, self).__init__()
-        self.weight = zeros((output_size, input_size))
-        self.bias = zeros(output_size)
+        self.weight = Parameter(zeros((output_size, input_size)))
+        self.bias = Parameter(zeros(output_size))
         # raise NotImplementedError("You need to implement this!")
 
     def forward(self,
@@ -211,7 +211,7 @@ class EllEssTeeEmm(Module):
         for i in range(num_layers):
             self.forward_layers.append(LSTMCell(input_size if i == 0 else hidden_size*(1+bidirectional), hidden_size))
             if bidirectional:
-                self.reverse_layers.append(LSTMCell(input_size if i == 0 else hidden_size*2, hidden_size))_size*2, hidden_size))
+                self.reverse_layers.append(LSTMCell(input_size if i == 0 else hidden_size*2, hidden_size))
 
         # raise NotImplementedError("You need to implement this!")
 
@@ -278,7 +278,17 @@ class GeeArrYou(Module):
             self.dropout - A dropout probability, usable as the "p" value of F.dropout.
         """
         super(GeeArrYou, self).__init__()
-        raise NotImplementedError("You need to implement this!")
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.dropout_p = dropout
+
+        self.forward_layers = ModuleList()
+        for i in range(num_layers):
+            self.forward_layers.append(GRUCell(input_size if i == 0 else hidden_size, hidden_size))
+
+        # raise NotImplementedError("You need to implement this!")
 
     def forward(self, x: TensorType["batch", "length", "input_size"]) -> TensorType["batch", "length", "hidden_size"]:
         """
@@ -291,6 +301,21 @@ class GeeArrYou(Module):
                    passed through F.dropout with the dropout probability provided when
                    initializing the GeeArrYou layer.
         """
+
+        B, L, _ = x.shape
+
+        H = zeros((self.num_layers, B, L, self.hidden_size))
+        for i in range(self.num_layers):
+            h = zeros((B, self.hidden_size))
+            for t in range(L):
+                if i == 0:
+                    h = self.forward_layers[i].forward(x[:, t, :], h)
+                else:
+                    h = F.dropout(h, p=self.dropout_p)
+                    h = self.forward_layers[i].forward(H[i-1, :, t, :], h)
+                H[i, :, t, :] = h
+        return H[-1, :, :, :]
+
         raise NotImplementedError("You need to implement this!")
 
 class Encoder(Module):
@@ -310,7 +335,25 @@ class Encoder(Module):
                 and an output size of dim_neck.
         """
         super(Encoder, self).__init__()
-        raise NotImplementedError("You need to implement this!")
+
+        self.dim_neck = dim_neck
+        self.dim_emb = dim_emb
+
+        self.convolutions = Sequential(
+            Conv1d(80+dim_emb, 512, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(512),
+            ReLU(),
+            Conv1d(512, 512, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(512),
+            ReLU(),
+            Conv1d(512, 512, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(512),
+            ReLU()
+        )
+
+        self.recurrent = EllEssTeeEmm(input_size=512, hidden_size=dim_neck, num_layers=2, bidirectional=True)
+
+        # raise NotImplementedError("You need to implement this!")
 
     def forward(self, x: TensorType["batch", "input_dim", "length"]) -> Tuple[
         TensorType["batch", "length", "dim_neck"],
@@ -324,6 +367,11 @@ class Encoder(Module):
             one for the forward direction (the first self.recurrent_hidden_size columns)
             and one for the backward direction (the last self.recurrent_hidden_size columns).
         """
+        output = self.convolutions(x)
+        output = self.recurrent(transpose(output, -1, -2))
+
+        return split(output, self.dim_neck, dim=-1)
+
         raise NotImplementedError("You need to implement this!")
       
 class Decoder(Module):
@@ -347,7 +395,27 @@ class Decoder(Module):
             self.fc_projection = a LineEar layer with an input size of 1024 and an output size of 80.
         """
         super(Decoder, self).__init__()
-        raise NotImplementedError("You need to implement this!")
+
+        self.dim_neck = dim_neck
+        self.dim_emb = dim_emb
+        self.dim_pre = dim_pre
+
+        self.recurrent1 = EllEssTeeEmm(input_size=2*dim_neck+dim_emb, hidden_size=dim_pre, num_layers=1, bidirectional=False)
+        self.convolutions = Sequential(
+            Conv1d(dim_pre, dim_pre, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(dim_pre),
+            ReLU(),
+            Conv1d(dim_pre, dim_pre, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(dim_pre),
+            ReLU(),
+            Conv1d(dim_pre, dim_pre, kernel_size=5, stride=1, padding=2, dilation=1),
+            BatchNorm1d(dim_pre),
+            ReLU()
+        )
+        self.recurrent2 = EllEssTeeEmm(input_size=dim_pre, hidden_size=1024, num_layers=2, bidirectional=False)
+        self.fc_projection = LineEar(input_size=1024, output_size=80)
+
+        # raise NotImplementedError("You need to implement this!")
 
     def forward(self, x: TensorType["batch", "input_length", "input_dim"]) -> TensorType["batch", "input_length", "output_dim"]:
         """
@@ -358,6 +426,13 @@ class Decoder(Module):
             should be transposed before input to the convolution layers, and this transposition
             should be undone before input to the second EllEssTeeEmm.
         """
+        output = self.recurrent1(x)
+        output = self.convolutions(transpose(output, -1, -2))
+        output = self.recurrent2(transpose(output, -1, -2))
+        output = self.fc_projection(output)
+
+        return output
+
         raise NotImplementedError("You need to implement this!")
     
 class Postnet(Module):
