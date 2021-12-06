@@ -493,7 +493,11 @@ class SpeakerEmbedderGeeArrYou(Module):
                 and an output size of fc_dim.
         """
         super(SpeakerEmbedderGeeArrYou, self).__init__()
-        raise NotImplementedError("You need to implement this!")
+
+        self.rnn_stack = GeeArrYou(input_size=n_mels, hidden_size=n_hid, num_layers=n_layers, dropout=hidden_p)
+        self.projection = LineEar(n_hid, fc_dim)
+
+        # raise NotImplementedError("You need to implement this!")
         
     def forward(self, x: TensorType["batch", "frames", "n_mels"]) -> TensorType["batch", "fc_dim"]:
         """
@@ -502,4 +506,11 @@ class SpeakerEmbedderGeeArrYou(Module):
             should be taken and passed through the fully connected layer.
             Each of the frames should then be normalized so that its Euclidean norm is 1.
         """
+
+        output = self.rnn_stack(x)
+        output = self.projection(output[:, -1, :])
+        output = F.normalize(output, p=2, dim=-1)
+
+        return output
+
         raise NotImplementedError("You need to implement this!")
