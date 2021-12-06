@@ -1,7 +1,7 @@
 from typing import Any, Tuple
 
 from torch import Tensor, matmul, norm, randn, zeros, zeros_like, cat
-from torch.nn import BatchNorm1d, Conv1d, Module, ModuleList, Parameter, ReLU, Sequential, Sigmoid, Tanh
+from torch.nn import BatchNorm1d, Conv1d, Module, ModuleList, Parameter, ReLU, Sequential, Sigmoid, Tanh, LSTMCell
 import torch.nn.functional as F
 # from torch.autograd import Variable
 from torch.nn.parameter import Parameter
@@ -90,7 +90,7 @@ class EllEssTeeEmmCell(Module):
 
         return H, C
 
-class EllEssTeeEmm(Module):
+class EllEssTeeEmm_Custom(Module):
     def __init__(self, input_size: int, hidden_size: int, num_layers: int, bidirectional: bool=False) -> None:
         """
         Sets up the following:
@@ -107,7 +107,7 @@ class EllEssTeeEmm(Module):
         """
         # reference: https://www.cnblogs.com/picassooo/p/13504533.html
 
-        super(EllEssTeeEmm, self).__init__()
+        super(EllEssTeeEmm_Cus, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -179,6 +179,99 @@ class EllEssTeeEmm(Module):
             Output[:, :, :] = cat((H_forward[-1, :, :, :], H_reverse[-1, :, :, :]), dim=2)
 
         return Output
+
+        # raise NotImplementedError("You need to implement this!")
+
+class EllEssTeeEmm(Module):
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int, bidirectional: bool=False) -> None:
+        """
+        Sets up the following:
+            self.forward_layers - A ModuleList of num_layers EllEssTeeEmmCell layers.
+                The first layer should have an input size of input_size
+                    and an output size of hidden_size,
+                while all other layers should have input and output both of size hidden_size.
+        
+        If bidirectional is True, then the following apply:
+          - self.reverse_layers - A ModuleList of num_layers EllEssTeeEmmCell layers,
+                of the exact same size and structure as self.forward_layers.
+          - In both self.forward_layers and self.reverse_layers,
+                all layers other than the first should have an input size of two times hidden_size.
+        """
+        # reference: https://www.cnblogs.com/picassooo/p/13504533.html
+
+        super(EllEssTeeEmm, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.output_size = self.hidden_size * (1 + self.bidirectional)
+
+        self.forward_layers = ModuleList()
+        self.reverse_layers = ModuleList()
+        if not bidirectional:
+            for i in range(num_layers):
+                self.forward_layers.append(LSTMCell(input_size if i == 0 else hidden_size, hidden_size))
+        else:
+            for i in range(num_layers):
+                self.forward_layers.append(LSTMCell(input_size if i == 0 else hidden_size*2, hidden_size))
+                self.reverse_layers.append(LSTMCell(input_size if i == 0 else hidden_size*2, hidden_size))
+
+
+        # raise NotImplementedError("You need to implement this!")
+
+    def forward(self,
+                x: TensorType["batch", "length", "input_size"]) -> TensorType["batch", "length", "output_size"]:
+        """
+        Performs the forward propagation of an EllEssTeeEmm layer.
+        Inputs:
+           x - The inputs to the cell.
+        Outputs:
+           output - The resulting (hidden state) output h.
+               If bidirectional was True when initializing the EllEssTeeEmm layer, then the "output_size"
+               of the output should be twice the hidden_size.
+               Otherwise, this "output_size" should be exactly the hidden size.
+        """
+        B, L, input_size = x.shape
+
+        # Output = zeros((B, L, self.output_size))
+        if not self.bidirectional:
+            H = zeros((self.num_layers, B, L, self.hidden_size))
+            for i in range(self.num_layers):
+                c = zeros((B, self.hidden_size))
+                h = zeros((B, self.hidden_size))
+                for t in range(L):
+                    if i == 0:
+                        h, c = self.forward_layers[i].forward(x[:, t, :], (h, c)) # [B, hidden_size]
+                    else:
+                        h, c = self.forward_layers[i].forward(H[i-1, :, t, :], (h, c))
+                    H[i, :, t, :] = h # store the current layer h as output to the next layer
+                    # if i == self.num_layers - 1:
+                        # last layer
+                        # Output[:, t, :] = h
+            return H[-1, :, :, :]
+        else:
+            H_forward = zeros((self.num_layers, B, L, self.hidden_size))
+            H_reverse = zeros((self.num_layers, B, L, self.hidden_size))
+            for i in range(self.num_layers):
+                c_forward = zeros((B, self.hidden_size))
+                h_forward = zeros((B, self.hidden_size))
+                c_reverse = zeros((B, self.hidden_size))
+                h_reverse = zeros((B, self.hidden_size))
+                for t in range(L):
+                    if i == 0:
+                        h_forward, c_forward = self.forward_layers[i].forward(x[:, t, :], (h_forward, c_forward))
+                        h_reverse, c_reverse = self.reverse_layers[i].forward(x[:, -1-t, :], (h_reverse, c_reverse))
+                    else:
+                        h_forward, c_forward = self.forward_layers[i].forward(
+                            cat((H_forward[i-1, :, t, :], H_reverse[i-1, :, t, :]), dim=-1), (h_forward, c_forward))
+                        h_reverse, c_reverse = self.reverse_layers[i].forward(
+                            cat((H_forward[i-1, :, -1-t, :], H_reverse[i-1, :, -1-t, :]), dim=-1), (h_reverse, c_reverse)) 
+                    H_forward[i, :, t, :] = h_forward
+                    H_reverse[i, :, -1-t, :] = h_reverse
+            # because it's bidirectional, we need to finish the loop before assign outputs
+            # Output[:, :, :] = cat((H_forward[-1, :, :, :], H_reverse[-1, :, :, :]), dim=2)
+            return cat((H_forward[-1, :, :, :], H_reverse[-1, :, :, :]), dim=2)
+        
 
         # raise NotImplementedError("You need to implement this!")
 
