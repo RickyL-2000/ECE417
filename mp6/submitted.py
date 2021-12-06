@@ -3,6 +3,8 @@ from typing import Any, Tuple
 from torch import Tensor, matmul, norm, randn, zeros, zeros_like, cat
 from torch.nn import BatchNorm1d, Conv1d, Module, ModuleList, Parameter, ReLU, Sequential, Sigmoid, Tanh
 import torch.nn.functional as F
+# from torch.autograd import Variable
+from torch.nn.parameter import Parameter
 
 from torchtyping import TensorType
 
@@ -38,15 +40,16 @@ class LineEar(Module):
         raise NotImplementedError("You need to implement this!")
 
 class EllEssTeeEmmCell(Module):
-    def __init__(self, input_size: int, hidden_size: int) -> None:
+    def __init__(self, input_size: int, hidden_size: int, bidirectional: bool=False) -> None:
         super(EllEssTeeEmmCell, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
+        self.bidirectional = bidirectional
 
-        self.weight_ih = zeros((4*hidden_size, input_size))
-        self.weight_hh = zeros((4*hidden_size, hidden_size))
-        self.bias_ih = zeros(4*hidden_size)
-        self.bias_hh = zeros(4*hidden_size)
+        self.weight_ih = Parameter(zeros((4*hidden_size, input_size)))
+        self.weight_hh = Parameter(zeros((4*hidden_size, hidden_size)))
+        self.bias_ih = Parameter(zeros(4*hidden_size))
+        self.bias_hh = Parameter(zeros(4*hidden_size))
 
         self.i_act = Sigmoid()
         self.f_act = Sigmoid()
@@ -112,15 +115,14 @@ class EllEssTeeEmm(Module):
         self.output_size = self.hidden_size * (1 + self.bidirectional)
 
         self.forward_layers = ModuleList()
+        self.reverse_layers = ModuleList()
         if not bidirectional:
             for i in range(num_layers):
                 self.forward_layers.append(EllEssTeeEmmCell(input_size if i == 0 else hidden_size, hidden_size))
         else:
             for i in range(num_layers):
-                self.forward_layers.append((
-                    EllEssTeeEmmCell(input_size if i == 0 else hidden_size*2, hidden_size), # right ward
-                    EllEssTeeEmmCell(input_size if i == 0 else hidden_size*2, hidden_size)  # left ward
-                ))
+                self.forward_layers.append(EllEssTeeEmmCell(input_size if i == 0 else hidden_size*2, hidden_size))
+                self.reverse_layers.append(EllEssTeeEmmCell(input_size if i == 0 else hidden_size*2, hidden_size))
 
 
         # raise NotImplementedError("You need to implement this!")
@@ -155,26 +157,26 @@ class EllEssTeeEmm(Module):
                         # last layer
                         Output[:, t, :] = h
         else:
-            H_right = zeros((self.num_layers, B, L, self.hidden_size))
-            H_left = zeros((self.num_layers, B, L, self.hidden_size))
+            H_forward = zeros((self.num_layers, B, L, self.hidden_size))
+            H_reverse = zeros((self.num_layers, B, L, self.hidden_size))
             for i in range(self.num_layers):
-                c_right = zeros((B, self.hidden_size))
-                h_right = zeros((B, self.hidden_size))
-                c_left = zeros((B, self.hidden_size))
-                h_left = zeros((B, self.hidden_size))
+                c_forward = zeros((B, self.hidden_size))
+                h_forward = zeros((B, self.hidden_size))
+                c_reverse = zeros((B, self.hidden_size))
+                h_reverse = zeros((B, self.hidden_size))
                 for t in range(L):
                     if i == 0:
-                        h_right, c_right = self.forward_layers[i][0].forward(x[:, t, :], h_right, c_right)
-                        h_left, c_left = self.forward_layers[i][1].forward(x[:, -1-t, :], h_left, c_left)
+                        h_forward, c_forward = self.forward_layers[i].forward(x[:, t, :], h_forward, c_forward)
+                        h_reverse, c_reverse = self.reverse_layers[i].forward(x[:, -1-t, :], h_reverse, c_reverse)
                     else:
-                        h_right, c_right = self.forward_layers[i][0].forward(
-                            cat((H_right[i-1, :, t, :], H_left[i-1, :, t, :])), h_right, c_right)
-                        h_left, c_left = self.forward_layers[i][1].forward(
-                            cat((H_right[i-1, :, -1-t, :], H_left[i-1, :, -1-t, :])), h_left, c_left) 
-                    H_right[i, :, t, :] = H_right
-                    H_left[i, :, -1-t, :] = H_left
+                        h_forward, c_forward = self.forward_layers[i].forward(
+                            cat((H_forward[i-1, :, t, :], H_reverse[i-1, :, t, :]), dim=-1), h_forward, c_forward)
+                        h_reverse, c_reverse = self.reverse_layers[i].forward(
+                            cat((H_forward[i-1, :, -1-t, :], H_reverse[i-1, :, -1-t, :]), dim=-1), h_reverse, c_reverse) 
+                    H_forward[i, :, t, :] = h_forward
+                    H_reverse[i, :, -1-t, :] = h_reverse
             # because it's bidirectional, we need to finish the loop before assign outputs
-            Output[:, :, :] = cat((H_right[-1, :, :, :], H_left[-1, :, :, :]), dim=2)
+            Output[:, :, :] = cat((H_forward[-1, :, :, :], H_reverse[-1, :, :, :]), dim=2)
 
         return Output
 
