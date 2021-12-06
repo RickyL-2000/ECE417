@@ -1,6 +1,6 @@
 from typing import Any, Tuple
 
-from torch import Tensor, matmul, norm, randn, zeros, zeros_like, cat
+from torch import Tensor, matmul, norm, randn, zeros, zeros_like, cat, stack
 from torch.nn import BatchNorm1d, Conv1d, Module, ModuleList, Parameter, ReLU, Sequential, Sigmoid, Tanh, LSTMCell
 import torch.nn.functional as F
 # from torch.autograd import Variable
@@ -235,20 +235,23 @@ class EllEssTeeEmm(Module):
 
         # Output = zeros((B, L, self.output_size))
         if not self.bidirectional:
-            H = zeros((self.num_layers, B, L, self.hidden_size))
             for i in range(self.num_layers):
+                output = []
+                H = zeros((B, L, self.hidden_size))
                 c = zeros((B, self.hidden_size))
                 h = zeros((B, self.hidden_size))
                 for t in range(L):
                     if i == 0:
                         h, c = self.forward_layers[i].forward(x[:, t, :], (h, c)) # [B, hidden_size]
                     else:
-                        h, c = self.forward_layers[i].forward(H[i-1, :, t, :], (h, c))
-                    H[i, :, t, :] = h # store the current layer h as output to the next layer
+                        h, c = self.forward_layers[i].forward(H[:, t, :], (h, c))
+                    output.append(h)
+                    # H[i, :, t, :] = h # store the current layer h as output to the next layer
                     # if i == self.num_layers - 1:
                         # last layer
                         # Output[:, t, :] = h
-            return H[-1, :, :, :]
+                H = stack(output, dim=1)
+            return H
         else:
             H_forward = zeros((self.num_layers, B, L, self.hidden_size))
             H_reverse = zeros((self.num_layers, B, L, self.hidden_size))
