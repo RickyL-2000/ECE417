@@ -1,6 +1,6 @@
 from typing import Any, Tuple
 
-from torch import Tensor, matmul, norm, randn, zeros, zeros_like
+from torch import Tensor, matmul, norm, randn, zeros, zeros_like, cat
 from torch.nn import BatchNorm1d, Conv1d, Module, ModuleList, Parameter, ReLU, Sequential, Sigmoid, Tanh
 import torch.nn.functional as F
 
@@ -19,7 +19,9 @@ class LineEar(Module):
         You may also set other instance variables at this point, but these are not strictly necessary.
         """
         super(LineEar, self).__init__()
-        raise NotImplementedError("You need to implement this!")
+        self.weight = zeros((output_size, input_size))
+        self.bias = zeros(output_size)
+        # raise NotImplementedError("You need to implement this!")
 
     def forward(self,
                 inputs: TensorType["batch", "input_size"]) -> TensorType["batch", "output_size"]:
@@ -32,7 +34,58 @@ class LineEar(Module):
         Note that all dimensions besides the last are preserved
             between inputs and outputs.
         """
+        return matmul(inputs, self.weight.T) + self.bias
         raise NotImplementedError("You need to implement this!")
+
+class EllEssTeeEmmCell(Module):
+    def __init__(self, input_size: int, hidden_size: int) -> None:
+        super(EllEssTeeEmmCell, self).__init__()
+        self.hidden_size = hidden_size
+        self.input_size = input_size
+
+        self.weight_ih = zeros((4*hidden_size, input_size))
+        self.weight_hh = zeros((4*hidden_size, hidden_size))
+        self.bias_ih = zeros(4*hidden_size)
+        self.bias_hh = zeros(4*hidden_size)
+
+        self.i_act = Sigmoid()
+        self.f_act = Sigmoid()
+        self.g_act = Tanh()
+        self.o_act = Sigmoid()
+        self.h_act = Tanh()
+
+    def forward(self, x: TensorType["batch", "input_size"],
+                h_old: TensorType["batch", "hidden_size"],
+                c_old: TensorType["batch", "hidden_size"]) -> TensorType["batch", "output_size"]:
+        W_ii = self.weight_ih[:self.hidden_size, :]     # [hidden_size, input_size]
+        W_if = self.weight_ih[self.hidden_size: 2*self.hidden_size, :]
+        W_ig = self.weight_ih[2*self.hidden_size: 3*self.hidden_size, :]
+        W_io = self.weight_ih[3*self.hidden_size:]
+
+        W_hi = self.weight_hh[:self.hidden_size, :]     # [hidden_size, hidden_size]
+        W_hf = self.weight_hh[self.hidden_size: 2*self.hidden_size, :]
+        W_hg = self.weight_hh[2*self.hidden_size: 3*self.hidden_size, :]
+        W_ho = self.weight_hh[3*self.hidden_size:]
+
+        b_ii = self.bias_ih[:self.hidden_size]
+        b_if = self.bias_ih[self.hidden_size: 2*self.hidden_size]
+        b_ig = self.bias_ih[2*self.hidden_size: 3*self.hidden_size]
+        b_io = self.bias_ih[3*self.hidden_size]
+
+        b_hi = self.bias_hh[:self.hidden_size]
+        b_hf = self.bias_hh[self.hidden_size: 2*self.hidden_size]
+        b_hg = self.bias_hh[2*self.hidden_size: 3*self.hidden_size]
+        b_ho = self.bias_hh[3*self.hidden_size]
+
+        I = self.i_act(matmul(x, W_ii.T) + b_ii + matmul(h_old, W_hi.T) + b_hi)   # ["batch", "hidden_size"]
+        F = self.f_act(matmul(x, W_if.T) + b_if + matmul(h_old, W_hf.T) + b_hf)
+        G = self.g_act(matmul(x, W_ig.T) + b_ig + matmul(h_old, W_hg.T) + b_hg)
+        O = self.o_act(matmul(x, W_io.T) + b_io + matmul(h_old, W_ho.T) + b_ho)
+
+        C = F * c_old + I * G   # ["batch", "hidden_size"]
+        H = O * self.h_act(C)
+
+        return H, C
 
 class EllEssTeeEmm(Module):
     def __init__(self, input_size: int, hidden_size: int, num_layers: int, bidirectional: bool=False) -> None:
@@ -49,8 +102,28 @@ class EllEssTeeEmm(Module):
           - In both self.forward_layers and self.reverse_layers,
                 all layers other than the first should have an input size of two times hidden_size.
         """
+        # reference: https://www.cnblogs.com/picassooo/p/13504533.html
+
         super(EllEssTeeEmm, self).__init__()
-        raise NotImplementedError("You need to implement this!")
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.output_size = self.hidden_size * (1 + self.bidirectional)
+
+        self.forward_layers = ModuleList()
+        if not bidirectional:
+            for i in range(num_layers):
+                self.forward_layers.append(EllEssTeeEmmCell(input_size if i == 0 else hidden_size, hidden_size))
+        else:
+            for i in range(num_layers):
+                self.forward_layers.append((
+                    EllEssTeeEmmCell(input_size if i == 0 else hidden_size*2, hidden_size), # right ward
+                    EllEssTeeEmmCell(input_size if i == 0 else hidden_size*2, hidden_size)  # left ward
+                ))
+
+
+        # raise NotImplementedError("You need to implement this!")
 
     def forward(self,
                 x: TensorType["batch", "length", "input_size"]) -> TensorType["batch", "length", "output_size"]:
@@ -64,7 +137,48 @@ class EllEssTeeEmm(Module):
                of the output should be twice the hidden_size.
                Otherwise, this "output_size" should be exactly the hidden size.
         """
-        raise NotImplementedError("You need to implement this!")
+        B, L, input_size = x.shape
+
+        Output = zeros((B, L, self.output_size))
+        if not self.bidirectional:
+            H = zeros((self.num_layers, B, L, self.hidden_size))
+            for i in range(self.num_layers):
+                c = zeros((B, self.hidden_size))
+                h = zeros((B, self.hidden_size))
+                for t in range(L):
+                    if i == 0:
+                        h, c = self.forward_layers[i].forward(x[:, t, :], h, c) # [B, hidden_size]
+                    else:
+                        h, c = self.forward_layers[i].forward(H[i-1, :, t, :], h, c)
+                    H[i, :, t, :] = h # store the current layer h as output to the next layer
+                    if i == self.num_layers - 1:
+                        # last layer
+                        Output[:, t, :] = h
+        else:
+            H_right = zeros((self.num_layers, B, L, self.hidden_size))
+            H_left = zeros((self.num_layers, B, L, self.hidden_size))
+            for i in range(self.num_layers):
+                c_right = zeros((B, self.hidden_size))
+                h_right = zeros((B, self.hidden_size))
+                c_left = zeros((B, self.hidden_size))
+                h_left = zeros((B, self.hidden_size))
+                for t in range(L):
+                    if i == 0:
+                        h_right, c_right = self.forward_layers[i][0].forward(x[:, t, :], h_right, c_right)
+                        h_left, c_left = self.forward_layers[i][1].forward(x[:, -1-t, :], h_left, c_left)
+                    else:
+                        h_right, c_right = self.forward_layers[i][0].forward(
+                            cat((H_right[i-1, :, t, :], H_left[i-1, :, t, :])), h_right, c_right)
+                        h_left, c_left = self.forward_layers[i][1].forward(
+                            cat((H_right[i-1, :, -1-t, :], H_left[i-1, :, -1-t, :])), h_left, c_left) 
+                    H_right[i, :, t, :] = H_right
+                    H_left[i, :, -1-t, :] = H_left
+            # because it's bidirectional, we need to finish the loop before assign outputs
+            Output[:, :, :] = cat((H_right[-1, :, :, :], H_left[-1, :, :, :]), dim=2)
+
+        return Output
+
+        # raise NotImplementedError("You need to implement this!")
 
 class GeeArrYou(Module):
     def __init__(self, input_size: int, hidden_size: int, num_layers: int, dropout: float=0) -> None:
