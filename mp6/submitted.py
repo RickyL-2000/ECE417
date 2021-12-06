@@ -208,14 +208,10 @@ class EllEssTeeEmm(Module):
 
         self.forward_layers = ModuleList()
         self.reverse_layers = ModuleList()
-        if not bidirectional:
-            for i in range(num_layers):
-                self.forward_layers.append(LSTMCell(input_size if i == 0 else hidden_size, hidden_size))
-        else:
-            for i in range(num_layers):
-                self.forward_layers.append(LSTMCell(input_size if i == 0 else hidden_size*2, hidden_size))
-                self.reverse_layers.append(LSTMCell(input_size if i == 0 else hidden_size*2, hidden_size))
-
+        for i in range(num_layers):
+            self.forward_layers.append(LSTMCell(input_size if i == 0 else hidden_size*(1+bidirectional), hidden_size))
+            if bidirectional:
+                self.reverse_layers.append(LSTMCell(input_size if i == 0 else hidden_size*2, hidden_size))_size*2, hidden_size))
 
         # raise NotImplementedError("You need to implement this!")
 
@@ -233,25 +229,18 @@ class EllEssTeeEmm(Module):
         """
         B, L, input_size = x.shape
 
-        # Output = zeros((B, L, self.output_size))
         if not self.bidirectional:
+            H = zeros((self.num_layers, B, L, self.hidden_size))
             for i in range(self.num_layers):
-                output = []
-                H = zeros((B, L, self.hidden_size))
                 c = zeros((B, self.hidden_size))
                 h = zeros((B, self.hidden_size))
                 for t in range(L):
                     if i == 0:
                         h, c = self.forward_layers[i].forward(x[:, t, :], (h, c)) # [B, hidden_size]
                     else:
-                        h, c = self.forward_layers[i].forward(H[:, t, :], (h, c))
-                    output.append(h)
-                    # H[i, :, t, :] = h # store the current layer h as output to the next layer
-                    # if i == self.num_layers - 1:
-                        # last layer
-                        # Output[:, t, :] = h
-                H = stack(output, dim=1)
-            return H
+                        h, c = self.forward_layers[i].forward(H[i-1, :, t, :], (h, c))
+                    H[i, :, t, :] = h # store the current layer h as output to the next layer
+            return H[-1, :, :, :]
         else:
             H_forward = zeros((self.num_layers, B, L, self.hidden_size))
             H_reverse = zeros((self.num_layers, B, L, self.hidden_size))
