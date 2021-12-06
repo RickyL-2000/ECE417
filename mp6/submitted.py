@@ -107,7 +107,7 @@ class EllEssTeeEmm_Custom(Module):
         """
         # reference: https://www.cnblogs.com/picassooo/p/13504533.html
 
-        super(EllEssTeeEmm_Cus, self).__init__()
+        super(EllEssTeeEmm_Custom, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
